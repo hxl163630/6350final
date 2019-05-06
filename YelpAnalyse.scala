@@ -1,14 +1,12 @@
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{DataFrame, SparkSession}
 import org.apache.spark.ml.feature.StringIndexer
 import org.apache.spark.ml.feature.StopWordsRemover
 import org.apache.spark.ml.Pipeline
-import org.apache.spark.ml.tuning.{CrossValidator, ParamGridBuilder}
+import org.apache.spark.ml.tuning.{CrossValidator, CrossValidatorModel, ParamGridBuilder}
 import org.apache.spark.ml.evaluation.MulticlassClassificationEvaluator
 import org.apache.spark.sql.functions._
-import org.apache.spark.ml.classification.LogisticRegression
-import org.apache.spark.ml.classification.NaiveBayes
-import org.apache.spark.ml.classification.DecisionTreeClassifier
-import org.apache.spark.ml.feature.{CountVectorizer}
+import org.apache.spark.ml.classification.{DecisionTreeClassifier, LogisticRegression, NaiveBayes, RandomForestClassifier}
+import org.apache.spark.ml.feature.CountVectorizer
 import org.apache.spark.ml.feature.{HashingTF, IDF, Tokenizer}
 import org.apache.spark.ml.feature.Word2Vec
 
@@ -33,7 +31,8 @@ object YelpAnalyse {
       .appName("YelpAnalyse")
       .getOrCreate()
       //.master("local")
-      //.config("spark.some.config.option", "some value")
+
+
 
     val sc = spark.sparkContext
     import spark.implicits._
@@ -48,13 +47,8 @@ object YelpAnalyse {
     val polarity = when($"stars" <= 2, "negative")
       .when($"stars" >= 4, "positive")
       .otherwise("neutral")
-
     val df_polarity = df_clean.withColumn("polarity", polarity)
 
-    if (args(1) != "stars" || args(1) != "polarity"){
-      println("Usage: YelpAnalyse InputDir polarity/stars OutputDir")
-      sys.exit(1)
-    }
 
     var labelIndexer = new StringIndexer().setInputCol(args(1)).setOutputCol("label")
     // convert polarity to label
@@ -68,7 +62,7 @@ object YelpAnalyse {
       .setInputCol("words")
       .setOutputCol("words_filtered")
 
-    // convert words to features
+    ///////////////////////// convert words to features
     val hashingTF = new HashingTF()
       .setInputCol(remover.getOutputCol)
       .setOutputCol("rawFeatures")
@@ -82,7 +76,7 @@ object YelpAnalyse {
       .setInputCol("words")
       .setOutputCol("features")
 
-    // naive bayes model
+    ///////////////////// classifier model
     val nb = new NaiveBayes()
       .setLabelCol("label")
       .setFeaturesCol("features")
@@ -96,30 +90,71 @@ object YelpAnalyse {
       .setLabelCol("label")
       .setFeaturesCol("features")
 
-    // Creating pipeline
+    val rf = new RandomForestClassifier()
+      .setLabelCol("label")
+      .setFeaturesCol("features")
+
+    ///////////////////////////////// Creating pipeline
+    var pipeline_array:Array[Pipeline] = Array()
+    var pipeline_array_label:Array[String] = Array()
     // Navie Bayes
     val pipeline_hashingTF_IDF_nb = new Pipeline()
       .setStages(Array(labelIndexer, tokenizer, remover, hashingTF,idf, nb))
+    pipeline_array = pipeline_array :+ pipeline_hashingTF_IDF_nb
+    pipeline_array_label = pipeline_array_label :+ "HashingTF-IDF and Naive Bayes"
+
     val pipeline_cvModel_nb = new Pipeline()
       .setStages(Array(labelIndexer, tokenizer, remover, cvModel, nb))
-//    val pipeline_word2Vec_nb = new Pipeline()
-//      .setStages(Array(labelIndexer, tokenizer, remover, word2Vec, nb))
+    pipeline_array = pipeline_array :+ pipeline_cvModel_nb
+    pipeline_array_label = pipeline_array_label :+ "CvModel and Naive Bayes"
+
     // Logistic Regression
     val pipeline_hashingTF_IDF_lr = new Pipeline()
       .setStages(Array(labelIndexer, tokenizer, remover, hashingTF,idf, lr))
+    pipeline_array = pipeline_array :+ pipeline_hashingTF_IDF_lr
+    pipeline_array_label = pipeline_array_label :+ "HashingTF-IDF and Logistic Regression"
+
     val pipeline_cvModel_lr = new Pipeline()
       .setStages(Array(labelIndexer, tokenizer, remover, cvModel, lr))
+    pipeline_array = pipeline_array :+ pipeline_cvModel_lr
+    pipeline_array_label = pipeline_array_label :+ "CvModel and Logistic Regression"
+
     val pipeline_word2Vec_lr = new Pipeline()
       .setStages(Array(labelIndexer, tokenizer, remover, word2Vec, lr))
+    pipeline_array = pipeline_array :+ pipeline_word2Vec_lr
+    pipeline_array_label = pipeline_array_label :+ "Word2Vec and Logistic Regression"
+
     // Decision Tree
     val pipeline_hashingTF_IDF_dt = new Pipeline()
       .setStages(Array(labelIndexer, tokenizer, remover, hashingTF,idf, dt))
+    pipeline_array = pipeline_array :+ pipeline_hashingTF_IDF_dt
+    pipeline_array_label = pipeline_array_label :+ "HashingTF-IDF and Decision Tree"
+
     val pipeline_cvModel_dt = new Pipeline()
       .setStages(Array(labelIndexer, tokenizer, remover, cvModel, dt))
+    pipeline_array = pipeline_array :+ pipeline_cvModel_dt
+    pipeline_array_label = pipeline_array_label :+ "CvModel and Decision Tree"
+
     val pipeline_word2Vec_dt = new Pipeline()
       .setStages(Array(labelIndexer, tokenizer, remover, word2Vec, dt))
+    pipeline_array = pipeline_array :+ pipeline_word2Vec_dt
+    pipeline_array_label = pipeline_array_label :+ "Word2Vec and Decision Tree"
 
-    //create paramGrid
+    // Random Forest
+    val pipeline_hashingTF_IDF_rf = new Pipeline()
+      .setStages(Array(labelIndexer, tokenizer, remover, hashingTF,idf, rf))
+    pipeline_array = pipeline_array :+ pipeline_hashingTF_IDF_rf
+    pipeline_array_label = pipeline_array_label :+ "HashingTF-IDF and Random Forest"
+    val pipeline_cvModel_rf = new Pipeline()
+      .setStages(Array(labelIndexer, tokenizer, remover, cvModel, rf))
+    pipeline_array = pipeline_array :+ pipeline_cvModel_rf
+    pipeline_array_label = pipeline_array_label :+ "CvModel and Random Forest"
+    val pipeline_word2Vec_rf = new Pipeline()
+      .setStages(Array(labelIndexer, tokenizer, remover, word2Vec, rf))
+    pipeline_array = pipeline_array :+ pipeline_word2Vec_rf
+    pipeline_array_label = pipeline_array_label :+ "Word2Vec and Random Forest"
+
+    //////////////////////////create paramGrid
     val paramGrid_hashingTF_IDF = new ParamGridBuilder()
       .addGrid(hashingTF.numFeatures, Array(10, 100))
       .build()
@@ -150,193 +185,80 @@ object YelpAnalyse {
       .addGrid(lr.elasticNetParam, Array(0.0, 0.4))
       .build()
 
-    // Create model
-    // Naive Bayes
-    val cv_hashingTF_IDF_nb = new CrossValidator()
-      .setEstimator(pipeline_hashingTF_IDF_nb)
-      .setEvaluator(new MulticlassClassificationEvaluator)
-      .setEstimatorParamMaps(paramGrid_hashingTF_IDF)
-      .setNumFolds(numOfFold)  // Use 3+ in practice
-    val cv_cvModel_nb = new CrossValidator()
-      .setEstimator(pipeline_cvModel_nb)
-      .setEvaluator(new MulticlassClassificationEvaluator)
-      .setEstimatorParamMaps(paramGrid_cvModel)
-      .setNumFolds(numOfFold)  // Use 3+ in practice
-//    val cv_word2Vec_nb = new CrossValidator()
-//      .setEstimator(pipeline_word2Vec_nb)
-//      .setEvaluator(new MulticlassClassificationEvaluator)
-//      .setEstimatorParamMaps(paramGrid_word2Vec)
-//      .setNumFolds(numOfFold)  // Use 3+ in practice
+    val paramGrid_hashingTF_IDF_rf = new ParamGridBuilder()
+      .addGrid(hashingTF.numFeatures, Array(10, 100))
+      .addGrid(rf.numTrees, Array(10, 50, 100))
+      .build()
 
-    // Logistic Regression
-    val cv_hashingTF_IDF_lr = new CrossValidator()
-      .setEstimator(pipeline_hashingTF_IDF_lr)
-      .setEvaluator(new MulticlassClassificationEvaluator)
-      .setEstimatorParamMaps(paramGrid_hashingTF_IDF_lr)
-      .setNumFolds(numOfFold)  // Use 3+ in practice
-    val cv_cvModel_lr = new CrossValidator()
-      .setEstimator(pipeline_cvModel_lr)
-      .setEvaluator(new MulticlassClassificationEvaluator)
-      .setEstimatorParamMaps(paramGrid_cvModel_lr)
-      .setNumFolds(numOfFold)  // Use 3+ in practice
-    val cv_word2Vec_lr = new CrossValidator()
-      .setEstimator(pipeline_word2Vec_lr)
-      .setEvaluator(new MulticlassClassificationEvaluator)
-      .setEstimatorParamMaps(paramGrid_word2Vec_lr)
-      .setNumFolds(numOfFold)  // Use 3+ in practice
-    // Decision Tree
-    val cv_hashingTF_IDF_dt = new CrossValidator()
-      .setEstimator(pipeline_hashingTF_IDF_dt)
-      .setEvaluator(new MulticlassClassificationEvaluator)
-      .setEstimatorParamMaps(paramGrid_hashingTF_IDF)
-      .setNumFolds(numOfFold)  // Use 3+ in practice
-    val cv_cvModel_dt = new CrossValidator()
-      .setEstimator(pipeline_cvModel_dt)
-      .setEvaluator(new MulticlassClassificationEvaluator)
-      .setEstimatorParamMaps(paramGrid_cvModel)
-      .setNumFolds(numOfFold)  // Use 3+ in practice
-    val cv_word2Vec_dt = new CrossValidator()
-      .setEstimator(pipeline_word2Vec_dt)
-      .setEvaluator(new MulticlassClassificationEvaluator)
-      .setEstimatorParamMaps(paramGrid_word2Vec)
-      .setNumFolds(numOfFold)  // Use 3+ in practice
+    val paramGrid_cvModel_rf = new ParamGridBuilder()
+      .addGrid(cvModel.vocabSize, Array(10, 100))
+      .addGrid(rf.numTrees, Array(10, 50, 100))
+      .build()
 
-    for(a <- 1 to numOfHoldout){
+    val paramGrid_word2Vec_rf = new ParamGridBuilder()
+      .addGrid(word2Vec.vectorSize, Array(10, 100))
+      .addGrid(rf.numTrees, Array(10, 50, 100))
+      .build()
+
+    val paramGrid_array = Array(paramGrid_hashingTF_IDF, paramGrid_cvModel, paramGrid_hashingTF_IDF_lr,
+      paramGrid_cvModel_lr, paramGrid_word2Vec_lr, paramGrid_hashingTF_IDF, paramGrid_cvModel, paramGrid_word2Vec,
+      paramGrid_hashingTF_IDF_rf, paramGrid_cvModel_rf, paramGrid_word2Vec_rf)
+
+    ///////////////////// Create model
+    var model_array:Array[CrossValidator] = Array()
+    // pipeline_array
+    // pipeline_array_label
+    for ( i <- 0 to (pipeline_array.length - 1)){
+      val model = new CrossValidator()
+        .setEstimator(pipeline_array(i))
+        .setEvaluator(new MulticlassClassificationEvaluator)
+        .setEstimatorParamMaps(paramGrid_array(i))
+        .setNumFolds(numOfFold)  // Use 3+ in practice
+      model_array = model_array :+ model
+    }
+
+    ///////////////////// running training and testing models
+    for(runtime <- 1 to numOfHoldout){
       // split data into train and test
       val Array(train, test) = df_polarity.randomSplit(Array(0.7, 0.3))
       // fit train data
-      // Naive Bayes
-      val cvModel_hashingTF_IDF_nb = cv_hashingTF_IDF_nb.fit(train)
-      val cvModel_cvModel_nb = cv_cvModel_nb.fit(train)
-//      val cvModel_word2Vec_nb = cv_word2Vec_nb.fit(train)
-      // Logistics Regression
-      val cvModel_hashingTF_IDF_lr = cv_hashingTF_IDF_lr.fit(train)
-      val cvModel_cvModel_lr = cv_cvModel_lr.fit(train)
-      val cvModel_word2Vec_lr = cv_word2Vec_lr.fit(train)
-      // Decision Tree
-      val cvModel_hashingTF_IDF_dt = cv_hashingTF_IDF_dt.fit(train)
-      val cvModel_cvModel_dt = cv_cvModel_dt.fit(train)
-      val cvModel_word2Vec_dt = cv_word2Vec_dt.fit(train)
+      var fitted_models:Array[CrossValidatorModel] = Array()
+      for (i <- 0 to (model_array.length - 1)){
+        fitted_models = fitted_models :+ model_array(i).fit(train)
+      }
 
       // Run test
-      // Naive Bayes
-      val result_hashingTF_IDF_nb = cvModel_hashingTF_IDF_nb.transform(test)
-      val result_cvModel_nb = cvModel_cvModel_nb.transform(test)
-//      val result_word2Vec_nb = cvModel_word2Vec_nb.transform(test)
-      // Logistics Regression
-      val result_hashingTF_IDF_lr = cvModel_hashingTF_IDF_lr.transform(test)
-      val result_cvModel_lr = cvModel_cvModel_lr.transform(test)
-      val result_word2Vec_lr = cvModel_word2Vec_lr.transform(test)
-      // Decision Tree
-      val result_hashingTF_IDF_dt = cvModel_hashingTF_IDF_dt.transform(test)
-      val result_cvModel_dt = cvModel_cvModel_dt.transform(test)
-      val result_word2Vec_dt = cvModel_word2Vec_dt.transform(test)
+      var test_models:Array[DataFrame] = Array()
+      for (i <- 0 to (model_array.length - 1)){
+        test_models = test_models :+ fitted_models(i).transform(test)
+      }
 
       //evaluate results
       val evaluator = new MulticlassClassificationEvaluator()
       evaluator.setLabelCol("label")
 
-      evaluator.setMetricName("f1")
-      val f1_hashingTF_IDF_nb = evaluator.evaluate(result_hashingTF_IDF_nb)
-      val f1_cvModel_nb = evaluator.evaluate(result_cvModel_nb)
-//      val f1_word2Vec_nb = evaluator.evaluate(result_word2Vec_nb)
+      val evaluator_array = Array("f1", "weightedPrecision", "weightedRecall", "accuracy")
+      var evaluator_result:Array[Double] = Array()
 
-      val f1_hashingTF_IDF_lr = evaluator.evaluate(result_hashingTF_IDF_lr)
-      val f1_cvModel_lr = evaluator.evaluate(result_cvModel_lr)
-      val f1_word2Vec_lr = evaluator.evaluate(result_word2Vec_lr)
+      for (eval <- 0 to (evaluator_array.length - 1)){
+        evaluator.setMetricName(evaluator_array(eval))
+        for (j <- 0 to (model_array.length - 1)){
+          evaluator_result = evaluator_result :+ evaluator.evaluate(test_models(j))
+        }
+      }
+      // outpu result
+      var result = ""
 
-      val f1_hashingTF_IDF_dt = evaluator.evaluate(result_hashingTF_IDF_dt)
-      val f1_cvModel_dt = evaluator.evaluate(result_cvModel_dt)
-      val f1_word2Vec_dt = evaluator.evaluate(result_word2Vec_dt)
-
-      evaluator.setMetricName("weightedPrecision")
-      val weightedPrecision_hashingTF_IDF_nb = evaluator.evaluate(result_hashingTF_IDF_nb)
-      val weightedPrecision_cvModel_nb = evaluator.evaluate(result_cvModel_nb)
-//      val weightedPrecision_word2Vec_nb = evaluator.evaluate(result_word2Vec_nb)
-
-      val weightedPrecision_hashingTF_IDF_lr = evaluator.evaluate(result_hashingTF_IDF_lr)
-      val weightedPrecision_cvModel_lr = evaluator.evaluate(result_cvModel_lr)
-      val weightedPrecision_word2Vec_lr = evaluator.evaluate(result_word2Vec_lr)
-
-      val weightedPrecision_hashingTF_IDF_dt = evaluator.evaluate(result_hashingTF_IDF_dt)
-      val weightedPrecision_cvModel_dt = evaluator.evaluate(result_cvModel_dt)
-      val weightedPrecision_word2Vec_dt = evaluator.evaluate(result_word2Vec_dt)
-
-      evaluator.setMetricName("weightedRecall")
-      val weightedRecall_hashingTF_IDF_nb = evaluator.evaluate(result_hashingTF_IDF_nb)
-      val weightedRecall_cvModel_nb = evaluator.evaluate(result_cvModel_nb)
-//      val weightedRecall_word2Vec_nb = evaluator.evaluate(result_word2Vec_nb)
-
-      val weightedRecall_hashingTF_IDF_lr = evaluator.evaluate(result_hashingTF_IDF_lr)
-      val weightedRecall_cvModel_lr = evaluator.evaluate(result_cvModel_lr)
-      val weightedRecall_word2Vec_lr = evaluator.evaluate(result_word2Vec_lr)
-
-      val weightedRecall_hashingTF_IDF_dt = evaluator.evaluate(result_hashingTF_IDF_dt)
-      val weightedRecall_cvModel_dt = evaluator.evaluate(result_cvModel_dt)
-      val weightedRecall_word2Vec_dt = evaluator.evaluate(result_word2Vec_dt)
-
-      evaluator.setMetricName("accuracy")
-      val accuracy_hashingTF_IDF_nb = evaluator.evaluate(result_hashingTF_IDF_nb)
-      val accuracy_cvModel_nb = evaluator.evaluate(result_cvModel_nb)
-//      val accuracy_word2Vec_nb = evaluator.evaluate(result_word2Vec_nb)
-
-      val accuracy_hashingTF_IDF_lr = evaluator.evaluate(result_hashingTF_IDF_lr)
-      val accuracy_cvModel_lr = evaluator.evaluate(result_cvModel_lr)
-      val accuracy_word2Vec_lr = evaluator.evaluate(result_word2Vec_lr)
-
-      val accuracy_hashingTF_IDF_dt = evaluator.evaluate(result_hashingTF_IDF_dt)
-      val accuracy_cvModel_dt = evaluator.evaluate(result_cvModel_dt)
-      val accuracy_word2Vec_dt = evaluator.evaluate(result_word2Vec_dt)
-
-      val result =
-        "Naive Bays + TF_IDF result:"+
-        "\nf1: "+f1_hashingTF_IDF_nb+
-        "\nweightedPrecision: "+weightedPrecision_hashingTF_IDF_nb+
-        "\nweightedRecall: "+weightedRecall_hashingTF_IDF_nb+
-        "\naccuracy: "+accuracy_hashingTF_IDF_nb+
-        "\n\nNaive Bays + cvModel result:"+
-        "\nf1: "+f1_cvModel_nb+
-        "\nweightedPrecision: "+weightedPrecision_cvModel_nb+
-        "\nweightedRecall: "+weightedRecall_cvModel_nb+
-        "\naccuracy: "+accuracy_cvModel_nb+
-//        "\nNaive Bays + word2Vec result:"+
-//        "\nf1: "+f1_word2Vec_nb+
-//        "\nweightedPrecision: "+weightedPrecision_word2Vec_nb+
-//        "\nweightedRecall: "+weightedRecall_word2Vec_nb+
-//        "\naccuracy: "+accuracy_word2Vec_nb+
-        "\n\n\nLogistic Regression + TF_IDF result:"+
-        "\nf1: "+f1_hashingTF_IDF_lr+
-        "\nweightedPrecision: "+weightedPrecision_hashingTF_IDF_lr+
-        "\nweightedRecall: "+weightedRecall_hashingTF_IDF_lr+
-        "\naccuracy: "+accuracy_hashingTF_IDF_lr+
-        "\n\nLogistic Regression + cvModel result:"+
-        "\nf1: "+f1_cvModel_lr+
-        "\nweightedPrecision: "+weightedPrecision_cvModel_lr+
-        "\nweightedRecall: "+weightedRecall_cvModel_lr+
-        "\naccuracy: "+accuracy_cvModel_lr+
-        "\n\nLogistic Regression + word2Vec result:"+
-        "\nf1: "+f1_word2Vec_lr+
-        "\nweightedPrecision: "+weightedPrecision_word2Vec_lr+
-        "\nweightedRecall: "+weightedRecall_word2Vec_lr+
-        "\naccuracy: "+accuracy_word2Vec_lr+
-        "\n\n\nDecision Tree + TF_IDF result:"+
-        "\nf1: "+f1_hashingTF_IDF_dt+
-        "\nweightedPrecision: "+weightedPrecision_hashingTF_IDF_dt+
-        "\nweightedRecall: "+weightedRecall_hashingTF_IDF_dt+
-        "\naccuracy: "+accuracy_hashingTF_IDF_dt+
-        "\n\nDecision Tree + cvModel result:"+
-        "\nf1: "+f1_cvModel_dt+
-        "\nweightedPrecision: "+weightedPrecision_cvModel_dt+
-        "\nweightedRecall: "+weightedRecall_cvModel_dt+
-        "\naccuracy: "+accuracy_cvModel_dt+
-        "\n\nDecision Tree + word2Vec result:"+
-        "\nf1: "+f1_word2Vec_dt+
-        "\nweightedPrecision: "+weightedPrecision_word2Vec_dt+
-        "\nweightedRecall: "+weightedRecall_word2Vec_dt+
-        "\naccuracy: "+accuracy_word2Vec_dt
+      for (j <- 0 to (evaluator_result.length - 1)){
+        if (j % model_array.length == 0){
+          result = result.concat("\n" + evaluator_array(j / model_array.length) + " values result: \n")
+        }
+        val k = j % model_array.length
+        result = result.concat(pipeline_array_label(k) + ": \t" + evaluator_result(j) + "\n")
+      }
 
       val result_rdd = sc.parallelize(Seq(result))
-      result_rdd.saveAsTextFile(args(2)+"/output"+a)
+      result_rdd.saveAsTextFile(args(2) + "/output" + runtime)
 
     }
 
